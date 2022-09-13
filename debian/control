@@ -1,0 +1,14 @@
+Source: ros-foxy-naoqi-driver
+Section: misc
+Priority: optional
+Maintainer: Marine Chamoux <mchamoux@softbankrobotics.com>
+Build-Depends: debhelper (>= 9.0.0), libboost-all-dev, ros-foxy-ament-cmake, ros-foxy-ament-lint-auto <!nocheck>, ros-foxy-ament-lint-common <!nocheck>, ros-foxy-cv-bridge, ros-foxy-diagnostic-msgs, ros-foxy-diagnostic-updater, ros-foxy-geometry-msgs, ros-foxy-image-transport, ros-foxy-kdl-parser, ros-foxy-naoqi-bridge-msgs (>= 2.0.0), ros-foxy-naoqi-libqi, ros-foxy-naoqi-libqicore, ros-foxy-orocos-kdl, ros-foxy-rclcpp, ros-foxy-robot-state-publisher, ros-foxy-sensor-msgs, ros-foxy-tf2-geometry-msgs, ros-foxy-tf2-msgs, ros-foxy-tf2-ros, ros-foxy-ros-workspace
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-foxy-naoqi-driver
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libboost-all-dev, ros-foxy-cv-bridge, ros-foxy-image-transport, ros-foxy-kdl-parser, ros-foxy-naoqi-bridge-msgs (>= 2.0.0), ros-foxy-naoqi-libqi, ros-foxy-naoqi-libqicore, ros-foxy-orocos-kdl, ros-foxy-rclcpp, ros-foxy-robot-state-publisher, ros-foxy-tf2-ros, ros-foxy-ros-workspace
+Conflicts: ros-foxy-nao-driver, ros-foxy-naoqi-rosbridge
+Description: Driver module between Aldebaran's NAOqiOS and ROS2.
+ It publishes all sensor and actuator data as well as basic diagnostic for battery, temperature. It subscribes also to RVIZ simple goal and cmd_vel for teleop.

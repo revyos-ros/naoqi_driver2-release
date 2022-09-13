@@ -1,0 +1,14 @@
+Source: ros-galactic-naoqi-driver
+Section: misc
+Priority: optional
+Maintainer: Marine Chamoux <mchamoux@softbankrobotics.com>
+Build-Depends: debhelper (>= 9.0.0), libboost-all-dev, ros-galactic-ament-cmake, ros-galactic-ament-lint-auto <!nocheck>, ros-galactic-ament-lint-common <!nocheck>, ros-galactic-cv-bridge, ros-galactic-diagnostic-msgs, ros-galactic-diagnostic-updater, ros-galactic-geometry-msgs, ros-galactic-image-transport, ros-galactic-kdl-parser, ros-galactic-naoqi-bridge-msgs (>= 2.0.0), ros-galactic-naoqi-libqi, ros-galactic-naoqi-libqicore, ros-galactic-orocos-kdl, ros-galactic-rclcpp, ros-galactic-robot-state-publisher, ros-galactic-sensor-msgs, ros-galactic-tf2-geometry-msgs, ros-galactic-tf2-msgs, ros-galactic-tf2-ros, ros-galactic-ros-workspace
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-galactic-naoqi-driver
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libboost-all-dev, ros-galactic-cv-bridge, ros-galactic-image-transport, ros-galactic-kdl-parser, ros-galactic-naoqi-bridge-msgs (>= 2.0.0), ros-galactic-naoqi-libqi, ros-galactic-naoqi-libqicore, ros-galactic-orocos-kdl, ros-galactic-rclcpp, ros-galactic-robot-state-publisher, ros-galactic-tf2-ros, ros-galactic-ros-workspace
+Conflicts: ros-galactic-nao-driver, ros-galactic-naoqi-rosbridge
+Description: Driver module between Aldebaran's NAOqiOS and ROS2.
+ It publishes all sensor and actuator data as well as basic diagnostic for battery, temperature. It subscribes also to RVIZ simple goal and cmd_vel for teleop.

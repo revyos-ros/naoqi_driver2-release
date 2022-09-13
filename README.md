@@ -1,1 +1,0 @@
-# naoqi_driver2-release

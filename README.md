@@ -1,3 +1,26 @@
+## naoqi_driver (humble) - 2.1.0-1
+
+The packages in the `naoqi_driver` repository were released into the `humble` distro by running `/usr/bin/bloom-release --rosdistro humble naoqi_driver` on `Thu, 23 Nov 2023 10:17:01 -0000`
+
+The `naoqi_driver` package was released.
+
+Version of package(s) in repository `naoqi_driver`:
+
+- upstream repository: https://github.com/ros-naoqi/naoqi_driver2.git
+- release repository: https://github.com/ros-naoqi/naoqi_driver2-release.git
+- rosdistro version: `2.0.0-1`
+- old version: `2.0.0-1`
+- new version: `2.1.0-1`
+
+Versions of tools used:
+
+- bloom version: `0.11.2`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## naoqi_driver (iron) - 2.1.0-1
 
 The packages in the `naoqi_driver` repository were released into the `iron` distro by running `/usr/bin/bloom-release --rosdistro iron naoqi_driver` on `Thu, 23 Nov 2023 10:14:47 -0000`

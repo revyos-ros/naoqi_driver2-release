@@ -26,9 +26,7 @@
 * BOOST
 */
 #include <boost/property_tree/ptree.hpp>
-#include <boost/thread/thread.hpp>
 #include <boost/thread/mutex.hpp>
-#include <boost/scoped_ptr.hpp>
 
 /*
 * ALDEB
@@ -67,7 +65,7 @@ class Driver : public rclcpp::Node
 public:
   /**
    * @brief Constructor for the naoqi driver
-   * 
+   *
    */
   Driver();
 
@@ -77,16 +75,18 @@ public:
   */
   ~Driver();
 
-  void init();
+  /**
+   * @brief Register the ROS components and start the ROS loop.
+   */
+  void run();
 
   /**
    * @brief Set the Session object
-   * 
+   *
    */
   void setQiSession(const qi::SessionPtr& session_ptr);
 
-  void startRosLoop();
-  void stopRosLoop();
+  void stop();
   /**
    * @brief Write a ROSbag with the last bufferized data (10s by default)
    */
@@ -229,8 +229,6 @@ public:
 
   void parseJsonFile(std::string filepath, boost::property_tree::ptree& pt);
 
-  void stopService();
-
   std::vector<std::string> getFilesList();
 
   void removeAllFiles();
@@ -248,7 +246,6 @@ private:
   bool has_stereo;
 
   const size_t freq_;
-  boost::thread publisherThread_;
 
   boost::shared_ptr<recorder::GlobalRecorder> recorder_;
 
@@ -266,15 +263,14 @@ private:
     boost::shared_ptr<T1> mfp = boost::make_shared<T1>( key );
     boost::shared_ptr<T2> mfr = boost::make_shared<T2>( key );
     boost::shared_ptr<T3> mfc = boost::make_shared<T3>( key , frequency, sessionPtr_, key );
-    mfc->registerCallback( message_actions::PUBLISH, boost::bind(&T1::publish, mfp, _1) );
-    mfc->registerCallback( message_actions::RECORD, boost::bind(&T2::write, mfr, _1) );
-    mfc->registerCallback( message_actions::LOG, boost::bind(&T2::bufferize, mfr, _1) );
+    mfc->registerCallback( message_actions::PUBLISH, boost::bind(&T1::publish, mfp, boost::placeholders::_1) );
+    mfc->registerCallback( message_actions::RECORD, boost::bind(&T2::write, mfr, boost::placeholders::_1) );
+    mfc->registerCallback( message_actions::LOG, boost::bind(&T2::bufferize, mfr, boost::placeholders::_1) );
     registerConverter( mfc, mfp, mfr );
   }
 
-  void rosLoop();
+  void rosIteration();
 
-  boost::mutex mutex_reinit_;
   boost::mutex mutex_conv_queue_;
   boost::mutex mutex_record_;
 

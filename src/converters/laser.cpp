@@ -21,12 +21,6 @@
 #include "laser.hpp"
 #include "../tools/from_any_value.hpp"
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
-
 namespace naoqi
 {
 namespace converter
@@ -130,7 +124,7 @@ static const char* laserMemoryKeys[] = {
 
 LaserConverter::LaserConverter( const std::string& name, const float& frequency, const qi::SessionPtr& session ):
   BaseConverter( name, frequency, session ),
-  p_memory_(session->service("ALMemory"))
+  p_memory_(session->service("ALMemory").value())
 {
 }
 
@@ -204,7 +198,7 @@ void LaserConverter::callAll( const std::vector<message_actions::MessageAction>&
     msg_.ranges[pos] = dist;
   }
 
-  for_each( message_actions::MessageAction action, actions )
+  for( message_actions::MessageAction action: actions )
   {
     callbacks_[action](msg_);
   }
@@ -224,12 +218,12 @@ void LaserConverter::reset( )
 void LaserConverter::setLaserRanges(
     const float &range_min,
     const float &range_max) {
-  
+
   if (range_min > 0)
     this->range_min_ = range_min;
   else
     this->range_min_ = 0.1;
-  
+
   if (range_max > this->range_min_)
     this->range_max_ = range_max;
   else

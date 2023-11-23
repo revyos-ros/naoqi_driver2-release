@@ -20,11 +20,6 @@
 */
 #include "string.hpp"
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace naoqi
 {
@@ -34,7 +29,7 @@ namespace converter
 MemoryStringConverter::MemoryStringConverter( const std::string& name, const float& frequency, const qi::SessionPtr& session, const std::string& memory_key )
   : BaseConverter( name, frequency, session ),
     memory_key_(memory_key),
-    p_memory_( session->service("ALMemory") )
+    p_memory_( session->service("ALMemory").value() )
 {}
 
 void MemoryStringConverter::registerCallback( message_actions::MessageAction action, Callback_t cb )
@@ -63,7 +58,7 @@ bool MemoryStringConverter::convert()
 void MemoryStringConverter::callAll( const std::vector<message_actions::MessageAction>& actions )
 {
   if (convert()) {
-    for_each( message_actions::MessageAction action, actions )
+    for( message_actions::MessageAction action: actions )
     {
       callbacks_[action]( msg_ );
     }

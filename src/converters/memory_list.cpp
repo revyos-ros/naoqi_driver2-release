@@ -20,11 +20,6 @@
 */
 #include "memory_list.hpp"
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace naoqi {
 
@@ -32,7 +27,7 @@ namespace converter {
 
 MemoryListConverter::MemoryListConverter(const std::vector<std::string>& key_list, const std::string &name, const float &frequency, const qi::SessionPtr &session):
     BaseConverter(name, frequency, session),
-    p_memory_(session->service("ALMemory")),
+    p_memory_(session->service("ALMemory").value()),
     _key_list(key_list)
 {}
 
@@ -76,7 +71,7 @@ void MemoryListConverter::callAll(const std::vector<message_actions::MessageActi
     }
   }
 
-  for_each( message_actions::MessageAction action, actions )
+  for( message_actions::MessageAction action: actions )
   {
     callbacks_[action]( _msg);
   }

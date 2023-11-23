@@ -24,9 +24,6 @@
 
 #include <boost/algorithm/string.hpp>
 #include <boost/thread/mutex.hpp>
-#include <boost/foreach.hpp>
-
-#define for_each BOOST_FOREACH
 
 namespace naoqi
 {
@@ -43,7 +40,7 @@ std::queue<rcl_interfaces::msg::Log> LOGS;
  * libqi and ROS log levels. The severity variable refers to the
  * RCUTILS_LOG_SEVERITY level of a specific logger, while the ros_msg variable
  * refers to the level of a rcl_interfaces/Log message.
- * 
+ *
  */
 class LogLevel
 {
@@ -56,23 +53,26 @@ public:
 
   static const LogLevel& get_from_qi(qi::LogLevel qi)
   {
-    for_each(const LogLevel& log_level, all_)
+    for(const LogLevel& log_level: all_)
       if (log_level.qi_ == qi)
         return log_level;
+    throw std::invalid_argument("unknown qi log level");
   }
 
   static const LogLevel& get_from_ros_msg(rcl_interfaces::msg::Log::_level_type ros_msg)
   {
-    for_each(const LogLevel& log_level, all_)
+    for(const LogLevel& log_level: all_)
       if (log_level.ros_msg_ == ros_msg)
         return log_level;
+      throw std::invalid_argument("unknown ROS message log level type");
   }
 
   static const LogLevel& get_from_log_severity(int severity)
   {
-    for_each(const LogLevel& log_level, all_)
+    for(const LogLevel& log_level: all_)
       if (log_level.severity_ == severity)
         return log_level;
+    throw std::invalid_argument("unknown log severity");
   }
 
   qi::LogLevel qi_;
@@ -114,7 +114,7 @@ void logCallback(const qi::LogMessage& msg)
 
 LogConverter::LogConverter( const std::string& name, float frequency, const qi::SessionPtr& session )
   : BaseConverter( name, frequency, session ),
-    logger_( session->service("LogManager") ),
+    logger_( session->service("LogManager").value() ),
     // Default log level is info
     log_level_(qi::LogLevel_Info)
 {
@@ -126,14 +126,14 @@ LogConverter::LogConverter( const std::string& name, float frequency, const qi::
   LogLevel(qi::LogLevel_Info, rcl_interfaces::msg::Log::INFO, RCUTILS_LOG_SEVERITY_INFO);
   LogLevel(qi::LogLevel_Verbose, rcl_interfaces::msg::Log::DEBUG, RCUTILS_LOG_SEVERITY_DEBUG);
   LogLevel(qi::LogLevel_Debug, rcl_interfaces::msg::Log::DEBUG, RCUTILS_LOG_SEVERITY_DEBUG);
-  
+
   // TEMPORARY CODE, WEIRD BUG
-  qi::AnyObject p_manager = session->service("LogManager");
+  qi::AnyObject p_manager = session->service("LogManager").value();
   auto test_obj = p_manager.call<qi::AnyObject>("getListener");
   qi::LogListenerPtr test = static_cast<qi::LogListenerPtr>(test_obj);
   test->onLogMessage.connect(logCallback);
   // END
-  
+
   // listener_ = logger_->getListener();
   set_qi_logger_level();
   // listener_->onLogMessage.connect(logCallback);
@@ -149,7 +149,7 @@ void LogConverter::callAll( const std::vector<message_actions::MessageAction>& a
   while ( !LOGS.empty() )
   {
     rcl_interfaces::msg::Log& log_msg = LOGS.front();
-    for_each( const message_actions::MessageAction& action, actions)
+    for( const message_actions::MessageAction& action: actions)
     {
       callbacks_[action](log_msg);
     }

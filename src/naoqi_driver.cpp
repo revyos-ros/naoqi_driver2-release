@@ -16,6 +16,16 @@
 */
 
 /*
+ * BOOST
+ */
+#include <boost/property_tree/json_parser.hpp>
+
+/*
+ * ROS
+ */
+#include <tf2_ros/buffer.h>
+
+/*
  * PUBLIC INTERFACE
  */
 #include <naoqi_driver/naoqi_driver.hpp>
@@ -90,6 +100,11 @@
 #include "event/touch.hpp"
 
 /*
+ * ACTIONS
+ */
+#include "actions/listen.hpp"
+
+/*
  * STATIC FUNCTIONS INCLUDE
  */
 #include "ros_env.hpp"
@@ -98,19 +113,9 @@
 #include "helpers/naoqi_helpers.hpp"
 #include "helpers/driver_helpers.hpp"
 
-/*
- * ROS
- */
-#include <tf2_ros/buffer.h>
 
-/*
- * BOOST
- */
-#include <boost/foreach.hpp>
-#include <boost/property_tree/json_parser.hpp>
-#define for_each BOOST_FOREACH
 
-#define DEBUG 0
+namespace ph = boost::placeholders;
 
 namespace naoqi
 {
@@ -126,91 +131,92 @@ Driver::Driver() : rclcpp::Node("naoqi_driver"),
 
 Driver::~Driver()
 {
-  std::cout << BOLDCYAN 
-    << "naoqi driver is shutting down.." 
-    << RESETCOLOR 
+  std::cout << BOLDCYAN
+    << "naoqi driver is shutting down.."
+    << RESETCOLOR
     << std::endl;
 }
 
-void Driver::init()
+void Driver::run()
 {
   loadBootConfig();
+  auto robot_desc_pub = tools::publishRobotDescription(this, robot_);
   registerDefaultConverter();
   registerDefaultSubscriber();
   registerDefaultServices();
-  startRosLoop();
 
-  /* TEMPORARY CODE, TO ORGANIZE, REPLACING MASTER URI METHOD */
-  // To avoid two calls to this function happening at the same time
-  boost::mutex::scoped_lock lock( mutex_conv_queue_ );
+  // Setting up action servers.
+  auto listen_server = action::createListenServer(this, sessionPtr_);
 
-  // Stopping the loop if there is any
-  stopRosLoop();
+  // A single iteration will propagate registrations, etc...
+  rosIteration();
 
-  // Reinitializing ROS Node
-  // {
-  //   nhPtr_.reset();
-  //   std::cout << "nodehandle reset " << std::endl;
-  //   ros_env::setMasterURI( uri, network_interface );
-  //   nhPtr_.reset( new ros::NodeHandle("~") );
-  // }
+  std::cout << BOLDYELLOW
+            << "naoqi_driver initialized"
+            << RESETCOLOR
+            << std::endl;
 
-  if(converters_.empty())
   {
-    // If there is no converters, create them
-    // (converters only depends on Naoqi, resetting the
-    // Ros node has no impact on them)
-    std::cout << BOLDRED << "going to register converters" << RESETCOLOR << std::endl;
-    registerDefaultConverter();
-    registerDefaultSubscriber();
-//    startRosLoop();
+    boost::mutex::scoped_lock lock( mutex_conv_queue_ );
+
+    if(converters_.empty())
+    {
+      // If there is no converters, create them
+      // (converters only depends on Naoqi, resetting the
+      // Ros node has no impact on them)
+      std::cout << BOLDRED << "going to register converters" << RESETCOLOR << std::endl;
+      registerDefaultConverter();
+      registerDefaultSubscriber();
+    }
+    else
+    {
+      std::cout << "NOT going to re-register the converters" << std::endl;
+      // If some converters are already there, then
+      // we just need to reset the registered publisher
+      // using the ROS node
+      typedef std::map< std::string, publisher::Publisher > publisher_map;
+      for( publisher_map::value_type &pub: pub_map_ )
+      {
+        pub.second.reset(this);
+      }
+
+      for (subscriber::Subscriber &sub: subscribers_)
+      {
+        sub.reset(this);
+      }
+
+      for( service::Service& srv: services_ )
+      {
+        srv.reset(this);
+      }
+    }
+
+    if (!event_map_.empty()) {
+      typedef std::map< std::string, event::Event > event_map;
+      for( event_map::value_type &event: event_map_ )
+      {
+        event.second.resetPublisher(this);
+      }
+    }
+    // Start publishing again
+    startPublishing();
   }
-  else
+
+  std::cout << BOLDYELLOW
+            << "naoqi_driver initialized"
+            << RESETCOLOR
+            << std::endl;
+  std::cout << "Starting ROS loop" << std::endl;
+
+  while ( keep_looping )
   {
-    std::cout << "NOT going to re-register the converters" << std::endl;
-    // If some converters are already there, then
-    // we just need to reset the registered publisher
-    // using the ROS node
-    typedef std::map< std::string, publisher::Publisher > publisher_map;
-    for_each( publisher_map::value_type &pub, pub_map_ )
-    {
-      pub.second.reset(this);
-    }
-
-    for_each( subscriber::Subscriber& sub, subscribers_ )
-    {
-      sub.reset(this);
-    }
-
-    for_each( service::Service& srv, services_ )
-    {
-      srv.reset(this);
-    }
+    this->rosIteration();
   }
-
-  if (!event_map_.empty()) {
-    typedef std::map< std::string, event::Event > event_map;
-    for_each( event_map::value_type &event, event_map_ )
-    {
-      event.second.resetPublisher(this);
-    }
-  }
-  // Start publishing again
-  startPublishing();
-
-  if ( !keep_looping )
-  {
-    std::cout << "going to start ROS loop" << std::endl;
-    startRosLoop();
-  }
-  /* END */
 }
-
-// }
 
 /**
  * @brief Sets the Driver sessionPtr, robot and has_stereo objects
- * 
+ *
  * @param sessionPtr
  */
 void Driver::setQiSession(const qi::SessionPtr& sessionPtr)
@@ -230,93 +236,78 @@ void Driver::loadBootConfig()
   }
 }
 
-void Driver::stopService() {
-  stopRosLoop();
-  converters_.clear();
-  subscribers_.clear();
-  event_map_.clear();
-}
+void Driver::rosIteration() {
+  std::vector<message_actions::MessageAction> actions;
 
-
-void Driver::rosLoop()
-{
-  static std::vector<message_actions::MessageAction> actions;
-
-//  ros::Time::init();
-  while( keep_looping )
   {
-    // clear the callback triggers
-    actions.clear();
+    boost::mutex::scoped_lock lock( mutex_conv_queue_ );
+    if (!conv_queue_.empty())
     {
-      boost::mutex::scoped_lock lock( mutex_conv_queue_ );
-      if (!conv_queue_.empty())
+      // Wait for the next Publisher to be ready
+      size_t conv_index = conv_queue_.top().conv_index_;
+      converter::Converter& conv = converters_[conv_index];
+      rclcpp::Time schedule = conv_queue_.top().schedule_;
+
+      // check the publishing condition
+      // 1. publishing enabled
+      // 2. has to be registered
+      // 3. has to be subscribed
+      PubConstIter pub_it = pub_map_.find( conv.name() );
+      if ( publish_enabled_ &&  pub_it != pub_map_.end() && pub_it->second.isSubscribed() )
       {
-        // Wait for the next Publisher to be ready
-        size_t conv_index = conv_queue_.top().conv_index_;
-        converter::Converter& conv = converters_[conv_index];
-        rclcpp::Time schedule = conv_queue_.top().schedule_;
-
-        // check the publishing condition
-        // 1. publishing enabled
-        // 2. has to be registered
-        // 3. has to be subscribed
-        PubConstIter pub_it = pub_map_.find( conv.name() );
-        if ( publish_enabled_ &&  pub_it != pub_map_.end() && pub_it->second.isSubscribed() )
-        {
-          actions.push_back(message_actions::PUBLISH);
-        }
-
-        // check the recording condition
-        // 1. recording enabled
-        // 2. has to be registered
-        // 3. has to be subscribed (configured to be recorded)
-        RecConstIter rec_it = rec_map_.find( conv.name() );
-        {
-          boost::mutex::scoped_lock lock_record( mutex_record_, boost::try_to_lock );
-          if ( lock_record && record_enabled_ && rec_it != rec_map_.end() && rec_it->second.isSubscribed() )
-          {
-            actions.push_back(message_actions::RECORD);
-          }
-        }
-
-        // bufferize data in recorder
-        if ( log_enabled_ && rec_it != rec_map_.end() && conv.frequency() != 0)
-        {
-          actions.push_back(message_actions::LOG);
-        }
-
-        // only call when we have at least one action to perform
-        if (actions.size() >0)
-        {
-          conv.callAll( actions );
-        }
-
-        rclcpp::Duration d((schedule - this->now()).nanoseconds());
-        if ( d > rclcpp::Duration(0, 0))
-        {
-          rclcpp::sleep_for(d.to_chrono<std::chrono::nanoseconds>());
-        }
-
-        // Schedule for a future time or not
-        conv_queue_.pop();
-        if ( conv.frequency() != 0 )
-        {
-          conv_queue_.push(ScheduledConverter(schedule + rclcpp::Duration(0, (1.0f / conv.frequency())*1e9), conv_index));
-        }
-
+        actions.push_back(message_actions::PUBLISH);
       }
-      else // conv_queue is empty.
+
+      // check the recording condition
+      // 1. recording enabled
+      // 2. has to be registered
+      // 3. has to be subscribed (configured to be recorded)
+      RecConstIter rec_it = rec_map_.find( conv.name() );
       {
-        // sleep one second
-        rclcpp::sleep_for(rclcpp::Duration(1, 0).to_chrono<std::chrono::nanoseconds>());
+        boost::mutex::scoped_lock lock_record( mutex_record_, boost::try_to_lock );
+        if ( lock_record && record_enabled_ && rec_it != rec_map_.end() && rec_it->second.isSubscribed() )
+        {
+          actions.push_back(message_actions::RECORD);
+        }
       }
-    } // mutex scope
 
-    if ( publish_enabled_ )
-    {
-      rclcpp::spin_some(this->get_node_base_interface());
+      // bufferize data in recorder
+      if ( log_enabled_ && rec_it != rec_map_.end() && conv.frequency() != 0)
+      {
+        actions.push_back(message_actions::LOG);
+      }
+
+      // only call when we have at least one action to perform
+      if (actions.size() >0)
+      {
+        conv.callAll( actions );
+      }
+
+      rclcpp::Duration d(schedule - this->now());
+      if ( d > rclcpp::Duration(0, 0))
+      {
+        rclcpp::sleep_for(d.to_chrono<std::chrono::nanoseconds>());
+      }
+
+      // Schedule for a future time or not
+      conv_queue_.pop();
+      if ( conv.frequency() != 0 )
+      {
+        conv_queue_.push(ScheduledConverter(schedule + rclcpp::Duration(0, (1.0f / conv.frequency())*1e9), conv_index));
+      }
+
     }
-  } // while loop
+    else // conv_queue is empty.
+    {
+      // sleep one second
+      rclcpp::sleep_for(rclcpp::Duration(1, 0).to_chrono<std::chrono::nanoseconds>());
+    }
+  } // mutex scope
+
+  if ( publish_enabled_ )
+  {
+    rclcpp::spin_some(this->get_node_base_interface());
+  }
 }
 
 std::string Driver::minidump(const std::string& prefix)
@@ -418,7 +409,7 @@ std::string Driver::minidumpConverters(const std::string& prefix, const std::vec
   boost::mutex::scoped_lock lock_record( mutex_record_ );
 
   bool is_started = false;
-  for_each( const std::string& name, names)
+  for( const std::string& name: names)
   {
     RecIter it = rec_map_.find(name);
     if ( it != rec_map_.end() )
@@ -538,7 +529,7 @@ bool Driver::registerMemoryConverter( const std::string& key, float frequency, c
   dataType::DataType data_type;
   qi::AnyValue value;
   try {
-    qi::AnyObject p_memory = sessionPtr_->service("ALMemory");
+    qi::AnyObject p_memory = sessionPtr_->service("ALMemory").value();
     value = p_memory.call<qi::AnyValue>("getData", key);
   } catch (const std::exception& e) {
     std::cout << BOLDRED << "Could not get data in memory for the key: "
@@ -688,13 +679,14 @@ void Driver::registerDefaultConverter()
   /** Info publisher **/
   if ( info_enabled )
   {
-    boost::shared_ptr<publisher::InfoPublisher> inp = boost::make_shared<publisher::InfoPublisher>( "info" , robot_);
-    boost::shared_ptr<recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped> > inr = boost::make_shared<recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped> >( "info" );
-    boost::shared_ptr<converter::InfoConverter> inc = boost::make_shared<converter::InfoConverter>( "info", 0, sessionPtr_ );
-    inc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::InfoPublisher::publish, inp, _1) );
-    inc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped>::write, inr, _1) );
-    inc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped>::bufferize, inr, _1) );
-    registerConverter( inc, inp, inr );
+    static const auto topic = "info";
+    auto inp = boost::make_shared<publisher::InfoPublisher>(topic);
+    auto inr = boost::make_shared<recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped> >(topic);
+    boost::shared_ptr<converter::InfoConverter> inc = boost::make_shared<converter::InfoConverter>(topic, 0, sessionPtr_);
+    inc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::InfoPublisher::publish, inp, ph::_1));
+    inc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped>::write, inr, ph::_1));
+    inc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::StringStamped>::bufferize, inr, ph::_1));
+    registerConverter(inc, inp, inr);
   }
 
 
@@ -703,7 +695,7 @@ void Driver::registerDefaultConverter()
   {
     boost::shared_ptr<converter::LogConverter> lc = boost::make_shared<converter::LogConverter>( "log", logs_frequency, sessionPtr_);
     boost::shared_ptr<publisher::LogPublisher> lp = boost::make_shared<publisher::LogPublisher>( "/rosout" );
-    lc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::LogPublisher::publish, lp, _1) );
+    lc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::LogPublisher::publish, lp, ph::_1) );
     registerPublisher( lc, lp );
   }
 
@@ -713,9 +705,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<converter::DiagnosticsConverter> dc = boost::make_shared<converter::DiagnosticsConverter>( "diag", diag_frequency, sessionPtr_);
     boost::shared_ptr<publisher::BasicPublisher<diagnostic_msgs::msg::DiagnosticArray> > dp = boost::make_shared<publisher::BasicPublisher<diagnostic_msgs::msg::DiagnosticArray> >( "/diagnostics" );
     boost::shared_ptr<recorder::DiagnosticsRecorder>   dr = boost::make_shared<recorder::DiagnosticsRecorder>( "/diagnostics" );
-    dc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<diagnostic_msgs::msg::DiagnosticArray>::publish, dp, _1) );
-    dc->registerCallback( message_actions::RECORD, boost::bind(&recorder::DiagnosticsRecorder::write, dr, _1) );
-    dc->registerCallback( message_actions::LOG, boost::bind(&recorder::DiagnosticsRecorder::bufferize, dr, _1) );
+    dc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<diagnostic_msgs::msg::DiagnosticArray>::publish, dp, ph::_1) );
+    dc->registerCallback( message_actions::RECORD, boost::bind(&recorder::DiagnosticsRecorder::write, dr, ph::_1) );
+    dc->registerCallback( message_actions::LOG, boost::bind(&recorder::DiagnosticsRecorder::bufferize, dr, ph::_1) );
     registerConverter( dc, dp, dr );
   }
 
@@ -725,9 +717,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<publisher::BasicPublisher<sensor_msgs::msg::Imu> > imutp = boost::make_shared<publisher::BasicPublisher<sensor_msgs::msg::Imu> >( "imu/torso" );
     boost::shared_ptr<recorder::BasicRecorder<sensor_msgs::msg::Imu> > imutr = boost::make_shared<recorder::BasicRecorder<sensor_msgs::msg::Imu> >( "imu/torso" );
     boost::shared_ptr<converter::ImuConverter> imutc = boost::make_shared<converter::ImuConverter>( "imu_torso", converter::IMU::TORSO, imu_torso_frequency, sessionPtr_);
-    imutc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<sensor_msgs::msg::Imu>::publish, imutp, _1) );
-    imutc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::write, imutr, _1) );
-    imutc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::bufferize, imutr, _1) );
+    imutc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<sensor_msgs::msg::Imu>::publish, imutp, ph::_1) );
+    imutc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::write, imutr, ph::_1) );
+    imutc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::bufferize, imutr, ph::_1) );
     registerConverter( imutc, imutp, imutr );
   }
 
@@ -739,9 +731,9 @@ void Driver::registerDefaultConverter()
       boost::shared_ptr<publisher::BasicPublisher<sensor_msgs::msg::Imu> > imubp = boost::make_shared<publisher::BasicPublisher<sensor_msgs::msg::Imu> >( "imu/base" );
       boost::shared_ptr<recorder::BasicRecorder<sensor_msgs::msg::Imu> > imubr = boost::make_shared<recorder::BasicRecorder<sensor_msgs::msg::Imu> >( "imu/base" );
       boost::shared_ptr<converter::ImuConverter> imubc = boost::make_shared<converter::ImuConverter>( "imu_base", converter::IMU::BASE, imu_base_frequency, sessionPtr_);
-      imubc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<sensor_msgs::msg::Imu>::publish, imubp, _1) );
-      imubc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::write, imubr, _1) );
-      imubc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::bufferize, imubr, _1) );
+      imubc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<sensor_msgs::msg::Imu>::publish, imubp, ph::_1) );
+      imubc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::write, imubr, ph::_1) );
+      imubc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::Imu>::bufferize, imubr, ph::_1) );
       registerConverter( imubc, imubp, imubr );
     }
   } // endif PEPPER
@@ -752,9 +744,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<publisher::CameraPublisher> fcp = boost::make_shared<publisher::CameraPublisher>( "camera/front/image_raw", AL::kTopCamera );
     boost::shared_ptr<recorder::CameraRecorder> fcr = boost::make_shared<recorder::CameraRecorder>( "camera/front", camera_front_recorder_fps );
     boost::shared_ptr<converter::CameraConverter> fcc = boost::make_shared<converter::CameraConverter>( "front_camera", camera_front_fps, sessionPtr_, AL::kTopCamera, camera_front_resolution );
-    fcc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, fcp, _1, _2) );
-    fcc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, fcr, _1, _2) );
-    fcc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, fcr, _1, _2) );
+    fcc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, fcp, ph::_1, ph::_2) );
+    fcc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, fcr, ph::_1, ph::_2) );
+    fcc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, fcr, ph::_1, ph::_2) );
     registerConverter( fcc, fcp, fcr );
   }
 
@@ -764,9 +756,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<publisher::CameraPublisher> bcp = boost::make_shared<publisher::CameraPublisher>( "camera/bottom/image_raw", AL::kBottomCamera );
     boost::shared_ptr<recorder::CameraRecorder> bcr = boost::make_shared<recorder::CameraRecorder>( "camera/bottom", camera_bottom_recorder_fps );
     boost::shared_ptr<converter::CameraConverter> bcc = boost::make_shared<converter::CameraConverter>( "bottom_camera", camera_bottom_fps, sessionPtr_, AL::kBottomCamera, camera_bottom_resolution );
-    bcc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, bcp, _1, _2) );
-    bcc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, bcr, _1, _2) );
-    bcc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, bcr, _1, _2) );
+    bcc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, bcp, ph::_1, ph::_2) );
+    bcc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, bcr, ph::_1, ph::_2) );
+    bcc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, bcr, ph::_1, ph::_2) );
     registerConverter( bcc, bcp, bcr );
   }
 
@@ -786,9 +778,9 @@ void Driver::registerDefaultConverter()
         camera_depth_resolution,
         this->has_stereo);
 
-      dcc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, dcp, _1, _2) );
-      dcc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, dcr, _1, _2) );
-      dcc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, dcr, _1, _2) );
+      dcc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, dcp, ph::_1, ph::_2) );
+      dcc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, dcr, ph::_1, ph::_2) );
+      dcc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, dcr, ph::_1, ph::_2) );
       registerConverter( dcc, dcp, dcr );
     }
 
@@ -806,9 +798,9 @@ void Driver::registerDefaultConverter()
         camera_stereo_resolution,
         this->has_stereo);
 
-      scc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, scp, _1, _2) );
-      scc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, scr, _1, _2) );
-      scc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, scr, _1, _2) );
+      scc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, scp, ph::_1, ph::_2) );
+      scc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, scr, ph::_1, ph::_2) );
+      scc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, scr, ph::_1, ph::_2) );
       registerConverter( scc, scp, scr );
     }
 
@@ -818,9 +810,9 @@ void Driver::registerDefaultConverter()
       boost::shared_ptr<publisher::CameraPublisher> icp = boost::make_shared<publisher::CameraPublisher>( "camera/ir/image_raw", AL::kInfraredOrStereoCamera );
       boost::shared_ptr<recorder::CameraRecorder> icr = boost::make_shared<recorder::CameraRecorder>( "camera/ir", camera_ir_recorder_fps );
       boost::shared_ptr<converter::CameraConverter> icc = boost::make_shared<converter::CameraConverter>( "infrared_camera", camera_ir_fps, sessionPtr_, AL::kInfraredOrStereoCamera, camera_ir_resolution);
-      icc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, icp, _1, _2) );
-      icc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, icr, _1, _2) );
-      icc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, icr, _1, _2) );
+      icc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::CameraPublisher::publish, icp, ph::_1, ph::_2) );
+      icc->registerCallback( message_actions::RECORD, boost::bind(&recorder::CameraRecorder::write, icr, ph::_1, ph::_2) );
+      icc->registerCallback( message_actions::LOG, boost::bind(&recorder::CameraRecorder::bufferize, icr, ph::_1, ph::_2) );
       registerConverter( icc, icp, icr );
     }
   } // endif PEPPER
@@ -831,9 +823,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<publisher::JointStatePublisher> jsp = boost::make_shared<publisher::JointStatePublisher>( "/joint_states" );
     boost::shared_ptr<recorder::JointStateRecorder> jsr = boost::make_shared<recorder::JointStateRecorder>( "/joint_states" );
     boost::shared_ptr<converter::JointStateConverter> jsc = boost::make_shared<converter::JointStateConverter>( "joint_states", joint_states_frequency, tf2_buffer_, sessionPtr_ );
-    jsc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::JointStatePublisher::publish, jsp, _1, _2) );
-    jsc->registerCallback( message_actions::RECORD, boost::bind(&recorder::JointStateRecorder::write, jsr, _1, _2) );
-    jsc->registerCallback( message_actions::LOG, boost::bind(&recorder::JointStateRecorder::bufferize, jsr, _1, _2) );
+    jsc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::JointStatePublisher::publish, jsp, ph::_1, ph::_2) );
+    jsc->registerCallback( message_actions::RECORD, boost::bind(&recorder::JointStateRecorder::write, jsr, ph::_1, ph::_2) );
+    jsc->registerCallback( message_actions::LOG, boost::bind(&recorder::JointStateRecorder::bufferize, jsr, ph::_1, ph::_2) );
     registerConverter( jsc, jsp, jsr );
     //  registerRecorder(jsc, jsr);
   }
@@ -848,9 +840,9 @@ void Driver::registerDefaultConverter()
       boost::shared_ptr<converter::LaserConverter> lc = boost::make_shared<converter::LaserConverter>( "laser", laser_frequency, sessionPtr_ );
 
       lc->setLaserRanges(laser_range_min, laser_range_max);
-      lc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<sensor_msgs::msg::LaserScan>::publish, lp, _1) );
-      lc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::LaserScan>::write, lr, _1) );
-      lc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::LaserScan>::bufferize, lr, _1) );
+      lc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<sensor_msgs::msg::LaserScan>::publish, lp, ph::_1) );
+      lc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::LaserScan>::write, lr, ph::_1) );
+      lc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<sensor_msgs::msg::LaserScan>::bufferize, lr, ph::_1) );
       registerConverter( lc, lp, lr );
     }
   }
@@ -872,9 +864,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<publisher::SonarPublisher> usp = boost::make_shared<publisher::SonarPublisher>( sonar_topics );
     boost::shared_ptr<recorder::SonarRecorder> usr = boost::make_shared<recorder::SonarRecorder>( sonar_topics );
     boost::shared_ptr<converter::SonarConverter> usc = boost::make_shared<converter::SonarConverter>( "sonar", sonar_frequency, sessionPtr_ );
-    usc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::SonarPublisher::publish, usp, _1) );
-    usc->registerCallback( message_actions::RECORD, boost::bind(&recorder::SonarRecorder::write, usr, _1) );
-    usc->registerCallback( message_actions::LOG, boost::bind(&recorder::SonarRecorder::bufferize, usr, _1) );
+    usc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::SonarPublisher::publish, usp, ph::_1) );
+    usc->registerCallback( message_actions::RECORD, boost::bind(&recorder::SonarRecorder::write, usr, ph::_1) );
+    usc->registerCallback( message_actions::LOG, boost::bind(&recorder::SonarRecorder::bufferize, usr, ph::_1) );
     registerConverter( usc, usp, usr );
   }
 
@@ -955,9 +947,9 @@ void Driver::registerDefaultConverter()
     boost::shared_ptr<publisher::BasicPublisher<nav_msgs::msg::Odometry> > lp = boost::make_shared<publisher::BasicPublisher<nav_msgs::msg::Odometry> >( "odom" );
     boost::shared_ptr<recorder::BasicRecorder<nav_msgs::msg::Odometry> > lr = boost::make_shared<recorder::BasicRecorder<nav_msgs::msg::Odometry> >( "odom" );
     boost::shared_ptr<converter::OdomConverter> lc = boost::make_shared<converter::OdomConverter>( "odom", odom_frequency, sessionPtr_ );
-    lc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<nav_msgs::msg::Odometry>::publish, lp, _1) );
-    lc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<nav_msgs::msg::Odometry>::write, lr, _1) );
-    lc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<nav_msgs::msg::Odometry>::bufferize, lr, _1) );
+    lc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<nav_msgs::msg::Odometry>::publish, lp, ph::_1) );
+    lc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<nav_msgs::msg::Odometry>::write, lr, ph::_1) );
+    lc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<nav_msgs::msg::Odometry>::bufferize, lr, ph::_1) );
     registerConverter( lc, lp, lr );
   }
 
@@ -1011,7 +1003,7 @@ void Driver::registerDefaultServices()
 std::vector<std::string> Driver::getAvailableConverters()
 {
   std::vector<std::string> conv_list;
-  for_each( const converter::Converter& conv, converters_ )
+  for( const converter::Converter& conv: converters_ )
   {
     conv_list.push_back(conv.name());
   }
@@ -1022,86 +1014,6 @@ std::vector<std::string> Driver::getAvailableConverters()
 
   return conv_list;
 }
-
-/*
-* EXPOSED FUNCTIONS
-*/
-
-// std::string Driver::getMasterURI() const
-// {
-//   return ros_env::getMasterURI();
-// }
-
-// void Driver::setMasterURI( const std::string& uri)
-// {
-//   setMasterURINet(uri, "eth0");
-// }
-
-// void Driver::setMasterURINet( const std::string& uri, const std::string& network_interface)
-// {
-//   // To avoid two calls to this function happening at the same time
-//   boost::mutex::scoped_lock lock( mutex_conv_queue_ );
-
-//   // Stopping the loop if there is any
-//   //stopRosLoop();
-
-//   // Reinitializing ROS Node
-//   {
-//     nhPtr_.reset();
-//     std::cout << "nodehandle reset " << std::endl;
-//     ros_env::setMasterURI( uri, network_interface );
-//     nhPtr_.reset( new ros::NodeHandle("~") );
-//   }
-
-//   if(converters_.empty())
-//   {
-//     // If there is no converters, create them
-//     // (converters only depends on Naoqi, resetting the
-//     // Ros node has no impact on them)
-//     std::cout << BOLDRED << "going to register converters" << RESETCOLOR << std::endl;
-//     registerDefaultConverter();
-//     registerDefaultSubscriber();
-// //    startRosLoop();
-//   }
-//   else
-//   {
-//     std::cout << "NOT going to re-register the converters" << std::endl;
-//     // If some converters are already there, then
-//     // we just need to reset the registered publisher
-//     // using the ROS node
-//     typedef std::map< std::string, publisher::Publisher > publisher_map;
-//     for_each( publisher_map::value_type &pub, pub_map_ )
-//     {
-//       pub.second.reset(this);
-//     }
-
-//     for_each( subscriber::Subscriber& sub, subscribers_ )
-//     {
-//       sub.reset(this);
-//     }
-
-//     for_each( service::Service& srv, services_ )
-//     {
-//       srv.reset(this);
-//     }
-//   }
-
-//   if (!event_map_.empty()) {
-//     typedef std::map< std::string, event::Event > event_map;
-//     for_each( event_map::value_type &event, event_map_ )
-//     {
-//       event.second.resetPublisher(this);
-//     }
-//   }
-//   // Start publishing again
-//   startPublishing();
-
-//   if ( !keep_looping )
-//   {
-//     std::cout << "going to start ROS loop" << std::endl;
-//     startRosLoop();
-//   }
-// }
 
 void Driver::startPublishing()
 {
@@ -1141,7 +1053,7 @@ void Driver::startRecording()
 {
   boost::mutex::scoped_lock lock_record( mutex_record_ );
   recorder_->startRecord();
-  for_each( converter::Converter& conv, converters_ )
+  for( converter::Converter& conv: converters_ )
   {
     RecIter it = rec_map_.find(conv.name());
     if ( it != rec_map_.end() )
@@ -1167,7 +1079,7 @@ void Driver::startRecordingConverters(const std::vector<std::string>& names)
   boost::mutex::scoped_lock lock_record( mutex_record_ );
 
   bool is_started = false;
-  for_each( const std::string& name, names)
+  for( const std::string& name: names)
   {
     RecIter it_rec = rec_map_.find(name);
     EventIter it_ev = event_map_.find(name);
@@ -1220,7 +1132,7 @@ std::string Driver::stopRecording()
 {
   boost::mutex::scoped_lock lock_record( mutex_record_ );
   record_enabled_ = false;
-  for_each( converter::Converter& conv, converters_ )
+  for( converter::Converter& conv: converters_ )
   {
     RecIter it = rec_map_.find(conv.name());
     if ( it != rec_map_.end() )
@@ -1245,28 +1157,18 @@ void Driver::stopLogging()
   log_enabled_ = false;
 }
 
-void Driver::startRosLoop()
-{
-  keep_looping = true;
-  if (publisherThread_.get_id() ==  boost::thread::id())
-    publisherThread_ = boost::thread( &Driver::rosLoop, this );
-  for(EventIter iterator = event_map_.begin(); iterator != event_map_.end(); iterator++)
-  {
-    iterator->second.startProcess();
-  }
-  // Create the publishing thread if needed
-  // keep_looping = true;
-}
-
-void Driver::stopRosLoop()
+void Driver::stop()
 {
   keep_looping = false;
-  if (publisherThread_.get_id() !=  boost::thread::id())
-    publisherThread_.join();
   for(EventIter iterator = event_map_.begin(); iterator != event_map_.end(); iterator++)
   {
     iterator->second.stopProcess();
   }
+
+  converters_.clear();
+  subscribers_.clear();
+  event_map_.clear();
+  rclcpp::spin_some(this->get_node_base_interface());
 }
 
 void Driver::parseJsonFile(std::string filepath, boost::property_tree::ptree &pt){
@@ -1311,7 +1213,7 @@ void Driver::addMemoryConverters(std::string filepath){
 
   std::vector<std::string> list;
   try{
-    BOOST_FOREACH(boost::property_tree::ptree::value_type &v, pt.get_child("memKeys"))
+    for(boost::property_tree::ptree::value_type &v: pt.get_child("memKeys"))
     {
       std::string topic = v.second.get_value<std::string>();
       list.push_back(topic);
@@ -1332,9 +1234,9 @@ void Driver::addMemoryConverters(std::string filepath){
   boost::shared_ptr<publisher::BasicPublisher<naoqi_bridge_msgs::msg::MemoryList> > mlp = boost::make_shared<publisher::BasicPublisher<naoqi_bridge_msgs::msg::MemoryList> >( topic );
   boost::shared_ptr<recorder::BasicRecorder<naoqi_bridge_msgs::msg::MemoryList> > mlr = boost::make_shared<recorder::BasicRecorder<naoqi_bridge_msgs::msg::MemoryList> >( topic );
   boost::shared_ptr<converter::MemoryListConverter> mlc = boost::make_shared<converter::MemoryListConverter>(list, topic, frequency, sessionPtr_ );
-  mlc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<naoqi_bridge_msgs::msg::MemoryList>::publish, mlp, _1) );
-  mlc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::MemoryList>::write, mlr, _1) );
-  mlc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::MemoryList>::bufferize, mlr, _1) );
+  mlc->registerCallback( message_actions::PUBLISH, boost::bind(&publisher::BasicPublisher<naoqi_bridge_msgs::msg::MemoryList>::publish, mlp, ph::_1) );
+  mlc->registerCallback( message_actions::RECORD, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::MemoryList>::write, mlr, ph::_1) );
+  mlc->registerCallback( message_actions::LOG, boost::bind(&recorder::BasicRecorder<naoqi_bridge_msgs::msg::MemoryList>::bufferize, mlr, ph::_1) );
   registerConverter( mlc, mlp, mlr );
 }
 
@@ -1343,7 +1245,7 @@ bool Driver::registerEventConverter(const std::string& key, const dataType::Data
   dataType::DataType data_type;
   qi::AnyValue value;
   try {
-    qi::AnyObject p_memory = sessionPtr_->service("ALMemory");
+    qi::AnyObject p_memory = sessionPtr_->service("ALMemory").value();
     value = p_memory.call<qi::AnyValue>("getData", key);
   } catch (const std::exception& e) {
     std::cout << BOLDRED << "Could not get data in memory for the key: "

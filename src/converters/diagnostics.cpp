@@ -26,11 +26,6 @@
 */
 #include <diagnostic_updater/diagnostic_status_wrapper.hpp>
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace
 {
@@ -53,16 +48,16 @@ namespace converter
 
 DiagnosticsConverter::DiagnosticsConverter( const std::string& name, float frequency, const qi::SessionPtr& session ):
     BaseConverter( name, frequency, session ),
-    p_memory_(session->service("ALMemory")),
+    p_memory_(session->service("ALMemory").value()),
     temperature_warn_level_(68),
     temperature_error_level_(74)
 {
   // Allow for temperature reporting (for CPU)
   if ((robot_ == robot::PEPPER) || (robot_ == robot::NAO)) {
-    p_body_temperature_ = session->service("ALBodyTemperature");
-    
+    p_body_temperature_ = session->service("ALBodyTemperature").value();
+
     // Only call setEnableNotifications if NAOqi < 2.9
-    if (helpers::driver::isNaoqiVersionLesser(naoqi_version_, 2, 9))
+    if (helpers::driver::isNaoqiVersionLesser(naoqi_version_, 2, 8))
     {
       p_body_temperature_.call<void>("setEnableNotifications", true);
     }
@@ -72,7 +67,7 @@ DiagnosticsConverter::DiagnosticsConverter( const std::string& name, float frequ
   qi::AnyValue qi_joint_limits;
 
   // Get all the joint names
-  this->p_motion_ = session->service("ALMotion");
+  this->p_motion_ = session->service("ALMotion").value();
   joint_names_ = this->p_motion_.call<std::vector<std::string> >("getBodyNames", "JointActuators");
 
   for(std::vector<std::string>::const_iterator it = joint_names_.begin(); it != joint_names_.end(); ++it) {
@@ -306,7 +301,7 @@ void DiagnosticsConverter::callAll( const std::vector<message_actions::MessageAc
 
   // TODO: wifi and ethernet statuses should be obtained from DBUS
 
-  for_each( message_actions::MessageAction action, actions )
+  for( message_actions::MessageAction action: actions )
   {
     callbacks_[action]( msg);
   }

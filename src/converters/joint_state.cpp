@@ -22,17 +22,11 @@
 #include "nao_footprint.hpp"
 
 /*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
-
-/*
 * ROS includes
 */
 #include <urdf/model.h>
 #include <kdl_parser/kdl_parser.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace naoqi
 {
@@ -42,11 +36,10 @@ namespace converter
 
 JointStateConverter::JointStateConverter( const std::string& name, const float& frequency, const BufferPtr& tf2_buffer, const qi::SessionPtr& session ):
   BaseConverter( name, frequency, session ),
-  p_motion_( session->service("ALMotion") ),
-  p_memory_( session->service("ALMemory") ),
+  p_motion_( session->service("ALMotion").value() ),
+  p_memory_( session->service("ALMemory").value() ),
   tf2_buffer_(tf2_buffer)
 {
-  robot_desc_ = tools::getRobotDescription( robot_ );
 }
 
 JointStateConverter::~JointStateConverter()
@@ -56,13 +49,15 @@ JointStateConverter::~JointStateConverter()
 
 void JointStateConverter::reset()
 {
-  if ( robot_desc_.empty() )
+  std::string robot_desc = naoqi::tools::getRobotDescription(robot_);
+  if ( robot_desc.empty() )
   {
     std::cout << "error in loading robot description" << std::endl;
     return;
   }
+
   urdf::Model model;
-  model.initString( robot_desc_ );
+  model.initString(robot_desc);
   KDL::Tree tree;
   kdl_parser::treeFromUrdfModel( model, tree );
 
@@ -86,11 +81,20 @@ void JointStateConverter::registerCallback( const message_actions::MessageAction
 
 void JointStateConverter::callAll( const std::vector<message_actions::MessageAction>& actions )
 {
+  /*
+   * get torso position for odometry at the same time as joint states
+   * can be called via getRobotPosture
+   * but this would require a proper URDF
+   * with a base_link and base_footprint in the base
+   */
+  auto getting_odometry_data = p_motion_.async<std::vector<float> >( "getPosition", "Torso", 1, true );
+
   // get joint state values
   std::vector<double> al_joint_angles = p_motion_.call<std::vector<double> >("getAngles", "Body", true );
   std::vector<double> al_joint_velocities;
   std::vector<double> al_joint_torques;
 
+  std::vector<float> al_odometry_data = getting_odometry_data.value();
   const rclcpp::Time& stamp = helpers::Time::now();
 
   /**
@@ -153,15 +157,8 @@ void JointStateConverter::callAll( const std::vector<message_actions::MessageAct
   /**
    * ODOMETRY
    */
-
-  /*
-   * can be called via getRobotPosture
-   * but this would require a proper URDF 
-   * with a base_link and base_footprint in the base
-   */
-  std::vector<float> al_odometry_data = p_motion_.call<std::vector<float> >( "getPosition", "Torso", 1, true );
-  const rclcpp::Time& odom_stamp = helpers::Time::now();
-  const float& odomX  =  al_odometry_data[0];
+  const rclcpp::Time &odom_stamp = stamp;
+  const float &odomX = al_odometry_data[0];
   const float& odomY  =  al_odometry_data[1];
   const float& odomZ  =  al_odometry_data[2];
   const float& odomWX =  al_odometry_data[3];
@@ -196,7 +193,7 @@ void JointStateConverter::callAll( const std::vector<message_actions::MessageAct
     tf2_buffer_.reset();
   }
 
-  for_each( message_actions::MessageAction action, actions )
+  for( message_actions::MessageAction action: actions )
   {
     callbacks_[action]( msg_joint_states_, tf_transforms_ );
   }

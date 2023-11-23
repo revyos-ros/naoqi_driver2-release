@@ -21,11 +21,6 @@
 #include "sonar.hpp"
 #include "../tools/from_any_value.hpp"
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace naoqi
 {
@@ -34,13 +29,13 @@ namespace converter
 
 SonarConverter::SonarConverter( const std::string& name, const float& frequency, const qi::SessionPtr& session )
   : BaseConverter( name, frequency, session ),
-    p_memory_( session->service("ALMemory") ),
+    p_memory_( session->service("ALMemory").value() ),
     is_subscribed_(false)
 {
   // Only create a sonar proxy if NAOqi < 2.9
   if (helpers::driver::isNaoqiVersionLesser(naoqi_version_, 2, 9))
   {
-    p_sonar_ = session->service("ALSonar");
+    p_sonar_ = session->service("ALSonar").value();
   }
 
   std::vector<std::string> keys;
@@ -116,7 +111,7 @@ void SonarConverter::callAll( const std::vector<message_actions::MessageAction>&
     msgs_[i].range = float(values[i]);
   }
 
-  for_each( message_actions::MessageAction action, actions )
+  for( message_actions::MessageAction action: actions )
   {
     callbacks_[action]( msgs_ );
   }

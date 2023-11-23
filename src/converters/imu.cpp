@@ -25,13 +25,8 @@
 * ROS includes
 */
 //#include <tf/transform_datatypes.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace naoqi
 {
@@ -40,7 +35,7 @@ namespace converter {
 
   ImuConverter::ImuConverter(const std::string& name, const IMU::Location& location,  const float& frequency, const qi::SessionPtr& session):
     BaseConverter(name, frequency, session),
-    p_memory_(session->service("ALMemory"))
+    p_memory_(session->service("ALMemory").value())
   {
     if(location == IMU::TORSO){
       msg_imu_.header.frame_id = "base_link";
@@ -126,7 +121,7 @@ namespace converter {
     msg_imu_.linear_acceleration_covariance[0] = -1;
 
 
-    for_each( message_actions::MessageAction action, actions )
+    for( message_actions::MessageAction action: actions )
     {
       callbacks_[action]( msg_imu_ );
     }

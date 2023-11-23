@@ -26,18 +26,13 @@
 /*
 * ROS includes
 */
-#include <cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.hpp>
 
 /*
 * CV includes
 */
 #include <opencv2/imgproc/imgproc.hpp>
 
-/*
-* BOOST includes
-*/
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace naoqi
 {
@@ -171,10 +166,9 @@ const sensor_msgs::msg::CameraInfo& getCameraInfo( int camera_source, int resolu
       return cam_info_msg;
     }
   }
-  else{
-    std::cout << "no camera information found for camera_source " << camera_source << " and res: " << resolution << std::endl;
-    return getEmptyInfo();
-  }
+
+  std::cout << "no camera information found for camera_source " << camera_source << " and res: " << resolution << std::endl;
+  return getEmptyInfo();
 }
 
 } // camera_info_definitions
@@ -186,7 +180,7 @@ CameraConverter::CameraConverter(
   const int& camera_source,
   const int& resolution,
   const bool& has_stereo) : BaseConverter( name, frequency, session ),
-    p_video_( session->service("ALVideoDevice") ),
+    p_video_( session->service("ALVideoDevice").value()),
     camera_source_(camera_source),
     resolution_(resolution),
     // change in case of depth camera
@@ -291,7 +285,7 @@ void CameraConverter::callAll( const std::vector<message_actions::MessageAction>
   //msg_->header.stamp.nsec = image.timestamp_us*1000;
   camera_info_.header.stamp = msg_->header.stamp;
 
-  for_each( const message_actions::MessageAction& action, actions )
+  for( const message_actions::MessageAction& action: actions )
   {
     callbacks_[action]( msg_, camera_info_ );
   }

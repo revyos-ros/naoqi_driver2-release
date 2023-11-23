@@ -25,8 +25,6 @@
 * BOOST includes
 */
 #include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
-#define for_each BOOST_FOREACH
 
 namespace naoqi
 {
@@ -35,7 +33,7 @@ namespace converter
 
 InfoConverter::InfoConverter( const std::string& name, float frequency, const qi::SessionPtr& session )
   : BaseConverter( name, frequency, session ),
-    p_memory_( session->service("ALMemory") )
+    p_memory_( session->service("ALMemory").value() )
 {
   keys_.push_back("RobotConfig/Head/FullHeadId");
   keys_.push_back("Device/DeviceList/ChestBoard/BodyId");
@@ -86,7 +84,7 @@ void InfoConverter::callAll( const std::vector<message_actions::MessageAction>& 
     if (i != keys_.size()-1)
     msg.data += " ; ";
   }
-  for_each( const message_actions::MessageAction& action, actions )
+  for( const message_actions::MessageAction& action: actions )
   {
     callbacks_[action](msg);
   }

@@ -38,7 +38,7 @@ EventRegister<Converter, Publisher, Recorder>::EventRegister()
 template <typename Converter, typename Publisher, typename Recorder>
 EventRegister<Converter, Publisher, Recorder>::EventRegister( const std::string& key, const qi::SessionPtr& session )
   : key_(key),
-    p_memory_( session->service("ALMemory") ),
+    p_memory_( session->service("ALMemory").value()),
     isStarted_(false),
     isPublishing_(false),
     isRecording_(false),
@@ -48,9 +48,10 @@ EventRegister<Converter, Publisher, Recorder>::EventRegister( const std::string&
   recorder_ = boost::make_shared<Recorder>( key_ );
   converter_ = boost::make_shared<Converter>( key_, 0, session, key_ );
 
-  converter_->registerCallback( message_actions::PUBLISH, boost::bind(&Publisher::publish, publisher_, _1) );
-  converter_->registerCallback( message_actions::RECORD, boost::bind(&Recorder::write, recorder_, _1) );
-  converter_->registerCallback( message_actions::LOG, boost::bind(&Recorder::bufferize, recorder_, _1) );
+  namespace ph = boost::placeholders;
+  converter_->registerCallback( message_actions::PUBLISH, boost::bind(&Publisher::publish, publisher_, ph::_1) );
+  converter_->registerCallback( message_actions::RECORD, boost::bind(&Recorder::write, recorder_, ph::_1) );
+  converter_->registerCallback( message_actions::LOG, boost::bind(&Recorder::bufferize, recorder_, ph::_1) );
 
   signal_ = p_memory_.call<qi::AnyObject>("subscriber", key_);
 }
@@ -133,8 +134,7 @@ void EventRegister<Converter, Publisher, Recorder>::isDumping(bool state)
 template <typename Converter, typename Publisher, typename Recorder>
 void EventRegister<Converter, Publisher, Recorder>::registerCallback()
 {
-  signalID_ = signal_.connect("signal", (boost::function<void(qi::AnyValue)>(boost::bind(&EventRegister<Converter, Publisher, Recorder>::onEvent,
-                                                                            this))));
+  signalID_ = signal_.connect("signal", [&](qi::AnyValue value) { onEvent(); }).value();
 }
 
 template <typename Converter, typename Publisher, typename Recorder>

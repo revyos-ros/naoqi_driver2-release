@@ -1,0 +1,14 @@
+Source: ros-humble-naoqi-driver
+Section: misc
+Priority: optional
+Maintainer: Victor Paléologue <victor.paleologue@palaio.eu>
+Build-Depends: debhelper (>= 9.0.0), libboost-all-dev, ros-humble-action-msgs, ros-humble-ament-cmake, ros-humble-ament-lint-auto <!nocheck>, ros-humble-ament-lint-common <!nocheck>, ros-humble-cv-bridge, ros-humble-diagnostic-msgs, ros-humble-diagnostic-updater, ros-humble-geometry-msgs, ros-humble-image-transport, ros-humble-kdl-parser, ros-humble-naoqi-bridge-msgs (>= 2.0.0), ros-humble-naoqi-libqi, ros-humble-naoqi-libqicore, ros-humble-rclcpp, ros-humble-rclcpp-action, ros-humble-robot-state-publisher, ros-humble-rosidl-default-generators, ros-humble-sensor-msgs, ros-humble-tf2-geometry-msgs, ros-humble-tf2-msgs, ros-humble-tf2-ros, ros-humble-ros-workspace, ros-humble-rosidl-typesupport-fastrtps-c, ros-humble-rosidl-typesupport-fastrtps-cpp
+Homepage: 
+Standards-Version: 3.9.2
+
+Package: ros-humble-naoqi-driver
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libboost-all-dev, ros-humble-action-msgs, ros-humble-cv-bridge, ros-humble-image-transport, ros-humble-kdl-parser, ros-humble-naoqi-bridge-msgs (>= 2.0.0), ros-humble-naoqi-libqi, ros-humble-naoqi-libqicore, ros-humble-rclcpp, ros-humble-rclcpp-action, ros-humble-robot-state-publisher, ros-humble-tf2-ros, ros-humble-ros-workspace
+Conflicts: ros-humble-nao-driver, ros-humble-naoqi-rosbridge
+Description: Driver module between Aldebaran's NAOqiOS and ROS2.
+ It publishes all sensor and actuator data as well as basic diagnostic for battery, temperature. It subscribes also to RVIZ simple goal and cmd_vel for teleop.
